@@ -112,9 +112,12 @@ title: This is frontmatter
   )
 })
 
-test('bundles mdx files from node_modules', async () => {
+test.only('bundles mdx files from node_modules', async () => {
   const mdxSource = `
-import MdxTestData from 'mdx-test-data'
+  import OtherData from '../other-data.mdx'
+
+  import MdxTestData from 'mdx-test-data'
+
 
 The content below was imported from an MDX File in node_modules.
 

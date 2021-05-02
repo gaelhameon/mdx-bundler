@@ -1,15 +1,15 @@
 import fs from 'fs'
 import path from 'path'
-import {StringDecoder} from 'string_decoder'
+import { StringDecoder } from 'string_decoder'
 import remarkFrontmatter from 'remark-frontmatter'
-import {remarkMdxFrontmatter} from 'remark-mdx-frontmatter'
+import { remarkMdxFrontmatter } from 'remark-mdx-frontmatter'
 import matter from 'gray-matter'
 import * as esbuild from 'esbuild'
-import {NodeResolvePlugin} from '@esbuild-plugins/node-resolve'
-import {globalExternals} from '@fal-works/esbuild-plugin-global-externals'
+import { NodeResolvePlugin } from '@esbuild-plugins/node-resolve'
+import { globalExternals } from '@fal-works/esbuild-plugin-global-externals'
 import dirnameMessedUp from './dirname-messed-up.cjs'
 
-const {readFile, unlink} = fs.promises
+const { readFile, unlink } = fs.promises
 
 /**
  *
@@ -35,17 +35,17 @@ async function bundleMDX(
 
   // xdm is a native ESM, and we're running in a CJS context. This is the
   // only way to import ESM within CJS
-  const [{compile: compileMDX}, {default: xdmESBuild}] = await Promise.all([
+  const [{ compile: compileMDX }, { default: xdmESBuild }] = await Promise.all([
     await import('xdm'),
     await import('xdm/esbuild.js'),
   ])
   // extract the frontmatter
-  const {data: frontmatter} = matter(mdxSource)
+  const { data: frontmatter } = matter(mdxSource)
 
   const entryPath = path.join(cwd, './_mdx_bundler_entry_point.mdx')
 
   /** @type Record<string, string> */
-  const absoluteFiles = {[entryPath]: mdxSource}
+  const absoluteFiles = { [entryPath]: mdxSource }
 
   for (const [filepath, fileCode] of Object.entries(files)) {
     absoluteFiles[path.join(cwd, filepath)] = fileCode
@@ -55,26 +55,38 @@ async function bundleMDX(
   const inMemoryPlugin = {
     name: 'inMemory',
     setup(build) {
-      build.onResolve({filter: /.*/}, ({path: filePath, importer}) => {
-        if (filePath === entryPath)
-          return {path: filePath, pluginData: {inMemory: true}}
+      build.onResolve({ filter: /.*/ }, ({ path: filePath, importer }) => {
+        console.log(`Top of onResolve`)
+        console.log({ filePath })
+        console.log({ importer })
+        if (filePath === entryPath) {
+          console.log(`Returning entryPath`);
+          return { path: filePath, pluginData: { inMemory: true } }
+        }
 
         const modulePath = path.resolve(path.dirname(importer), filePath)
+        console.log({ modulePath })
 
-        if (modulePath in absoluteFiles)
-          return {path: modulePath, pluginData: {inMemory: true}}
+        if (modulePath in absoluteFiles) {
+          console.log(`Returning modulePath`);
+          return { path: modulePath, pluginData: { inMemory: true } }
+        }
 
         for (const ext of ['.js', '.ts', '.jsx', '.tsx', '.json', '.mdx']) {
           const fullModulePath = `${modulePath}${ext}`
-          if (fullModulePath in absoluteFiles)
-            return {path: fullModulePath, pluginData: {inMemory: true}}
+          console.log({ fullModulePath })
+          if (fullModulePath in absoluteFiles) {
+            console.log(`Returning fullModulePath`);
+            return { path: fullModulePath, pluginData: { inMemory: true } }
+          }
         }
 
         // Return an empty object so that esbuild will handle resolving the file itself.
+        console.log(`returning empty object for ${modulePath}`);
         return {}
       })
 
-      build.onLoad({filter: /.*/}, async ({path: filePath, pluginData}) => {
+      build.onLoad({ filter: /.*/ }, async ({ path: filePath, pluginData }) => {
         if (pluginData === undefined || !pluginData.inMemory) {
           // Return an empty object so that esbuild will load & parse the file contents itself.
           return {}
@@ -97,11 +109,11 @@ async function bundleMDX(
                 jsx: true,
                 remarkPlugins: [
                   remarkFrontmatter,
-                  [remarkMdxFrontmatter, {name: 'frontmatter'}],
+                  [remarkMdxFrontmatter, { name: 'frontmatter' }],
                 ],
               }),
             )
-            return {contents: vfile.toString(), loader: 'jsx'}
+            return { contents: vfile.toString(), loader: 'jsx' }
           }
           default: {
             /** @type import('esbuild').Loader */
@@ -126,6 +138,29 @@ async function bundleMDX(
     },
   }
 
+  /** @returns {import('esbuild').Plugin} */
+  const debugPlugin = (subName) => {
+    const name = `debug-${subName}`;
+    return {
+      name,
+      setup(build) {
+        build.onResolve({ filter: /.*/ }, ({ path: filePath, importer }) => {
+          console.log(`Top of ${name} onResolve`)
+          console.log({ filePath })
+          console.log({ importer })
+          return null;
+        })
+
+        build.onLoad({ filter: /.*/ }, async ({ path: filePath, pluginData }) => {
+          console.log(`Top of ${name} onLoad`)
+          console.log({ filePath })
+          console.log({ pluginData })
+          return {}
+        })
+      },
+    }
+  }
+
   const buildOptions = esbuildOptions({
     entryPoints: [entryPath],
     write: false,
@@ -133,6 +168,8 @@ async function bundleMDX(
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV),
     },
     plugins: [
+      debugPlugin('firstOfAll'),
+      debugPlugin('secondOfAll'),
       globalExternals({
         ...globals,
         react: {
@@ -145,7 +182,8 @@ async function bundleMDX(
         },
       }),
       // eslint-disable-next-line babel/new-cap
-      NodeResolvePlugin({extensions: ['.js', '.ts', '.jsx', '.tsx']}),
+      debugPlugin('afterGlobalExternals'),
+      // NodeResolvePlugin({extensions: ['.js', '.ts', '.jsx', '.tsx']}),
       inMemoryPlugin,
       // NOTE: the only time the xdm esbuild plugin will be used
       // is if it's not processed by our inMemory plugin which will
@@ -154,7 +192,12 @@ async function bundleMDX(
       // If someone wants to customize *this* particular xdm compilation,
       // they'll need to use the esbuildOptions function to swap this
       // for their own configured version of this plugin.
-      xdmESBuild(),
+      xdmESBuild(
+        //   {
+        //   format: 'mdx',
+        //   mdxExtensions: ['.mdx2']
+        // }
+      ),
     ],
     bundle: true,
     format: 'iife',
@@ -168,6 +211,8 @@ async function bundleMDX(
     const decoder = new StringDecoder('utf8')
 
     const code = decoder.write(Buffer.from(bundled.outputFiles[0].contents))
+
+    console.log(code);
 
     return {
       code: `${code};return Component.default;`,
@@ -193,4 +238,4 @@ async function bundleMDX(
   )
 }
 
-export {bundleMDX}
+export { bundleMDX }
